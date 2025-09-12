@@ -304,11 +304,20 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
     std::cout << "--------------------  M=" << M << " N=" << N << " K=" << K << "  --------------------\n"; // banner
     std::cout << "Block size: " << Mb*2 << "x" << Nb<< "\n"; // logical cluster tile size processed per task
 
-    // Allocate host memory
-    float *h_A = new float[M * K]; // host A (fp32) row-major MxK
-    float *h_B = new float[K * N]; // host B (fp32) row-major KxN
-    float *h_C = new float[M * N]; // host C (fp32) output MxN
-    float *h_C_ref = new float[M * N]; // host reference C
+    // Decide whether to compute CPU reference based on problem size (avoid huge CPU work and memory)
+    bool do_ref = DO_CPU_REF && (M <= 2048 && N <= 2048 && K <= 2048);
+
+    // Allocate host memory (allocate large fp32 buffers only if doing CPU reference)
+    float *h_A = nullptr; // host A (fp32) row-major MxK
+    float *h_B = nullptr; // host B (fp32) row-major KxN
+    float *h_C = nullptr; // host C (fp32) output MxN (GPU result converted to fp32)
+    float *h_C_ref = nullptr; // host reference C
+    if(do_ref) {
+        h_A = new float[M * K];
+        h_B = new float[K * N];
+        h_C = new float[M * N];
+        h_C_ref = new float[M * N];
+    }
 
     std::cout << "Allocated host memory" << std::endl;
 
@@ -317,17 +326,21 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
     std::mt19937 gen(42); // fixed seed for repeatability
     std::uniform_real_distribution<> dis(-0.5, 0.5); // input range
 
-    // Initialize matrices with random values
-    for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen); // random A
-    for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen); // random B
+    // Initialize matrices with random values (fp32 only when doing CPU reference)
+    if(do_ref) {
+        for (int i = 0; i < M * K; ++i) h_A[i] = dis(gen); // random A
+        for (int i = 0; i < K * N; ++i) h_B[i] = dis(gen); // random B
+    }
 
     std::cout << "Initialized matrices" << std::endl;
 
     // Perform CPU matrix multiplication for reference with GELU epilogue (only for small sizes)
-    bool do_ref = DO_CPU_REF && (M <= 2048 && N <= 2048 && K <= 2048);
-    if(do_ref) cpu_gemm(h_A, h_B, h_C_ref, M, N, K); // compute reference C on CPU
-
-    std::cout << "Performed CPU matrix multiplication + GELU (reference)" << std::endl;
+    if(do_ref) {
+        cpu_gemm(h_A, h_B, h_C_ref, M, N, K); // compute reference C on CPU
+        std::cout << "Performed CPU matrix multiplication + GELU (reference)" << std::endl;
+    } else {
+        std::cout << "Skipping CPU reference (GPU-only large run)" << std::endl;
+    }
 
     // Allocate device memory
     __nv_bfloat16 *d_A, *d_B, *d_C; // device buffers in bf16
@@ -347,8 +360,19 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
     // Convert to __nv_bfloat16 and copy to device
     __nv_bfloat16 *h_A_bf16 = new __nv_bfloat16[M * K]; // temporary host bf16 buffers
     __nv_bfloat16 *h_B_bf16 = new __nv_bfloat16[K * N];
-    for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]); // convert A to bf16
-    for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]); // convert B to bf16
+    if(do_ref) {
+        for (int i = 0; i < M * K; ++i) h_A_bf16[i] = __float2bfloat16(h_A[i]); // convert A to bf16
+        for (int i = 0; i < K * N; ++i) h_B_bf16[i] = __float2bfloat16(h_B[i]); // convert B to bf16
+    } else {
+        for (int i = 0; i < M * K; ++i) {
+            float v = static_cast<float>(dis(gen));
+            h_A_bf16[i] = __float2bfloat16(v);
+        }
+        for (int i = 0; i < K * N; ++i) {
+            float v = static_cast<float>(dis(gen));
+            h_B_bf16[i] = __float2bfloat16(v);
+        }
+    }
 
     cudaMemcpy(d_A, h_A_bf16, M*K*2, cudaMemcpyHostToDevice); // copy A to device
     cudaMemcpy(d_B, h_B_bf16, K*N*2, cudaMemcpyHostToDevice); // copy B to device
@@ -398,16 +422,17 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
         return -1; // abort on error
     }
 
-    // Copy result back to host
-    __nv_bfloat16 *h_C_bf16 = new __nv_bfloat16[M * N]; // host buffer for C in bf16
-    cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost); // copy back
+    // Copy result back to host only when verifying
+    __nv_bfloat16 *h_C_bf16 = nullptr; // host buffer for C in bf16
+    if(do_ref) {
+        h_C_bf16 = new __nv_bfloat16[M * N];
+        cudaMemcpy(h_C_bf16, d_C, M*N*2, cudaMemcpyDeviceToHost); // copy back
+        std::cout << "Copied result back to host" << std::endl;
 
-    std::cout << "Copied result back to host" << std::endl;
-
-    // Convert result back to float for comparison
-    for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]); // convert to fp32
-
-    std::cout << "Converted result back to float" << std::endl;
+        // Convert result back to float for comparison
+        for (int i = 0; i < M * N; ++i) h_C[i] = __bfloat162float(h_C_bf16[i]); // convert to fp32
+        std::cout << "Converted result back to float" << std::endl;
+    }
 
     // Verify GELU epilogue correctness against CPU reference
     if(do_ref) {
@@ -455,7 +480,7 @@ int main() { // standalone driver
     run_benchmark(N, N, N);
     // Larger tests (comment out if CPU reference is too slow for your machine)
     N = 8192; run_benchmark(N, N, N);
-    // N = 16384; run_benchmark(N, N, N);
+    N = 16384; run_benchmark(N, N, N);
     return 0; // done
 }
 
