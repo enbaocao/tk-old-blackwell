@@ -264,7 +264,8 @@ void matmul_gelu(const __grid_constant__ matmul_globals g) { // clustered kernel
 }
 
 
-constexpr bool NCU = true; // set to false for warmup and repeated timing; true for single-run (e.g., when profiling)
+constexpr bool NCU = false; // set to false for warmup and repeated timing; true for single-run (e.g., when profiling)
+constexpr bool DO_CPU_REF = true; // compute CPU reference when problem size is small enough
 #include <iostream> // host I/O again for standalone main
 #include <random>   // RNG for input initialization
 #include <cuda_bf16.h> // CUDA bfloat16 conversions (host/device)
@@ -322,8 +323,9 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
 
     std::cout << "Initialized matrices" << std::endl;
 
-    // Perform CPU matrix multiplication for reference with GELU epilogue
-    if(true) cpu_gemm(h_A, h_B, h_C_ref, M, N, K); // compute reference C on CPU
+    // Perform CPU matrix multiplication for reference with GELU epilogue (only for small sizes)
+    bool do_ref = DO_CPU_REF && (M <= 2048 && N <= 2048 && K <= 2048);
+    if(do_ref) cpu_gemm(h_A, h_B, h_C_ref, M, N, K); // compute reference C on CPU
 
     std::cout << "Performed CPU matrix multiplication + GELU (reference)" << std::endl;
 
@@ -408,24 +410,28 @@ int run_benchmark(size_t M, size_t N, size_t K) { // allocate, initialize, run k
     std::cout << "Converted result back to float" << std::endl;
 
     // Verify GELU epilogue correctness against CPU reference
-    float max_error = 0.0f; // track worst-case abs error
-    float average_error = 0.0f; // accumulate average error
-    int error_count = 0; // count large-error elements
-    for (int i = 0; i < M * N; ++i) { // check all elements
-        float error = std::abs(h_C[i] - h_C_ref[i]); // absolute difference
-        if(error > 1.0) { // tolerant threshold due to bf16 rounding
-            if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl; // print first few
-            else if(error_count == 21) std::cout << "Too many errors to show them all.\n"; // suppress spam
-            error_count++;
+    if(do_ref) {
+        float max_error = 0.0f; // track worst-case abs error
+        float average_error = 0.0f; // accumulate average error
+        int error_count = 0; // count large-error elements
+        for (int i = 0; i < M * N; ++i) { // check all elements
+            float error = std::abs(h_C[i] - h_C_ref[i]); // absolute difference
+            if(error > 1.0) { // tolerant threshold due to bf16 rounding
+                if(error_count < 20) std::cout << "Error at row " << i / N << " col " << i % N << ": " << h_C[i] << " != " << h_C_ref[i] << " (ref)" << std::endl; // print first few
+                else if(error_count == 21) std::cout << "Too many errors to show them all.\n"; // suppress spam
+                error_count++;
+            }
+            max_error = std::max(max_error, error); // update worst
+            average_error += error; // sum for mean
         }
-        max_error = std::max(max_error, error); // update worst
-        average_error += error; // sum for mean
-    }
-    average_error /= M*N; // compute mean error
+        average_error /= M*N; // compute mean error
 
-    std::cout << "[VERIFY] GELU epilogue — Max error: " << max_error << std::endl;
-    std::cout << "[VERIFY] GELU epilogue — Average error: " << average_error << std::endl;
-    std::cout << "[VERIFY] GELU epilogue — Error count: " << error_count << std::endl;
+        std::cout << "[VERIFY] GELU epilogue — Max error: " << max_error << std::endl;
+        std::cout << "[VERIFY] GELU epilogue — Average error: " << average_error << std::endl;
+        std::cout << "[VERIFY] GELU epilogue — Error count: " << error_count << std::endl;
+    } else {
+        std::cout << "[VERIFY] Skipping CPU reference/verification for large sizes (> " << 2048 << ")" << std::endl;
+    }
 
     // Clean up
     delete[] h_A; // free host buffers
@@ -448,7 +454,7 @@ int main() { // standalone driver
     N = 1024;
     run_benchmark(N, N, N);
     // Larger tests (comment out if CPU reference is too slow for your machine)
-    // N = 8192; run_benchmark(N, N, N);
+    N = 8192; run_benchmark(N, N, N);
     // N = 16384; run_benchmark(N, N, N);
     return 0; // done
 }
