@@ -115,6 +115,8 @@ constexpr bool NCU = false;
 #include <random>
 #include <cuda_bf16.h>
 #include <omp.h>
+#include <cstring>
+#include <cstdlib>
 
 void cpu_gemm(float* a, float* b, float* c, int M, int N, int K) {
     #pragma omp parallel for collapse(2) // otherwise the CPU version takes for everrrrrr
@@ -288,11 +290,29 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     return 0;
 }
 
-int main() {
-    int N;
-    N = 4096;
-    run_benchmark<matmul_template_fp8<2,4,8>>(N, N, N);
-    return 0;
+int main(int argc, char** argv) {
+    int N = 4096;
+    const char* shape = "2x4"; // default tile shape M_BLOCK x N_BLOCK
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--n") == 0 && i + 1 < argc) {
+            N = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--shape") == 0 && i + 1 < argc) {
+            shape = argv[++i];
+        }
+    }
+
+    if (std::strcmp(shape, "2x4") == 0) {
+        return run_benchmark<matmul_template_fp8<2,4,8>>(N, N, N);
+    } else if (std::strcmp(shape, "2x6") == 0) {
+        return run_benchmark<matmul_template_fp8<2,6,8>>(N, N, N);
+    } else if (std::strcmp(shape, "2x8") == 0) {
+        return run_benchmark<matmul_template_fp8<2,8,8>>(N, N, N);
+    } else if (std::strcmp(shape, "3x4") == 0) {
+        return run_benchmark<matmul_template_fp8<3,4,8>>(N, N, N);
+    } else {
+        std::cout << "Unknown shape '" << shape << "'. Supported: 2x4, 2x6, 2x8, 3x4. Falling back to 2x4.\n";
+        return run_benchmark<matmul_template_fp8<2,4,8>>(N, N, N);
+    }
 }
 
 
