@@ -27,7 +27,7 @@ struct matmul_template_fp8 {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout_fp8<M_BLOCK, N_BLOCK>;
     using wide_tile = st_bf<64, 64*N_BLOCK>;
-    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=5, PRODUCER_BARRIER_ARRIVALS=1;
+    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=8, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*64*64));
@@ -202,7 +202,7 @@ int run_benchmark(size_t M, size_t N, size_t K) {
     cudaFuncSetAttribute(prototype::lcf::kernel<mmt>, cudaFuncAttributeMaxDynamicSharedMemorySize, mem_size);
 
     // Launch kernel
-    dim3 grid(mmt::grid(M, N, K));
+    dim3 grid(mmt::template grid<false>(M, N, K));
     dim3 block(kittens::prototype::detail::NUM_THREADS_v<mmt>);
     std::cout << "Launching warmup kernel with grid (" << grid.x << ", " << grid.y << "), block (" << block.x << ")\n";
     for(int i = 0; i < (NCU ? 0 : 2); i++) { // warmup
