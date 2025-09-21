@@ -60,9 +60,11 @@ struct matmul_template_fp8 {
         __device__ static void load(producer_load_args<layout> args) {
             if(warpgroup::warpid() == 0) {
                 tma::expect(args.inputs_arrived, args.input);
+                #pragma unroll
                 for(int i = 0; i < M_BLOCK; i++)
                     tma::load_async(args.input.a[i], args.globals.A,
                                     {args.common.coord.x+i, args.iter}, args.inputs_arrived);
+                #pragma unroll
                 for(int i = 0; i < N_BLOCK; i++)
                     tma::load_async(args.input.b[i], args.globals.B,
                                     {args.common.coord.y+i, args.iter}, args.inputs_arrived);
@@ -72,6 +74,7 @@ struct matmul_template_fp8 {
     struct consumer {
         __device__ static void setup(consumer_setup_args<layout> args) {
             warpgroup::increase_registers<232>(); // increase registers for consumers
+            #pragma unroll
             for (int n = 0; n < N_BLOCK; n++)
                 zero(args.state.accum[n]);
         }
@@ -93,12 +96,13 @@ struct matmul_template_fp8 {
             }
             warpgroup::sync(warpgroup::groupid()+4);
             if(warpgroup::warpid() == 0) {
-                for(int i = 0; i < N_BLOCK; i++) {
+                #pragma unroll
+                for(int i = 0; i < N_BLOCK; i++)
                     tma::store_async(args.globals.C, args.finish.c[warpgroup::groupid()][i],
                                    {args.common.coord.x, args.common.coord.y+i});
-                    tma::store_async_read_wait();
-                }
+                tma::store_async_read_wait();
             }
+            #pragma unroll
             for(int n = 0; n < N_BLOCK; n++) zero(args.state.accum[n]);
             if(laneid() == 0) arrive(args.finish_finished);
         }
