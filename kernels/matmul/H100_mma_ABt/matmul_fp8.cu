@@ -22,12 +22,12 @@ struct matmul_layout_fp8 {
     struct consumer_state { rt_fl<16, 64> accum[N_BLOCK]; };
 };
 
-template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12>
+template<int _M_BLOCK=2, int _N_BLOCK=4, int _SUPER_M=12, int _INPUT_PIPE_STAGES=8>
 struct matmul_template_fp8 {
     static constexpr int M_BLOCK = _M_BLOCK, N_BLOCK = _N_BLOCK, SUPER_M = _SUPER_M;
     using layout    = matmul_layout_fp8<M_BLOCK, N_BLOCK>;
     using wide_tile = st_bf<64, 64*N_BLOCK>;
-    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=8, PRODUCER_BARRIER_ARRIVALS=1;
+    static constexpr int NUM_CONSUMER_WARPS=M_BLOCK*4, INPUT_PIPE_STAGES=_INPUT_PIPE_STAGES, PRODUCER_BARRIER_ARRIVALS=1;
     // Helper functions
     template<bool PERISISTENT_GRID=true> __host__ static inline dim3 grid(int M, int N, int K) {
         return dim3(PERISISTENT_GRID ? 132 : M*N/(M_BLOCK*N_BLOCK*64*64));
@@ -302,16 +302,16 @@ int main(int argc, char** argv) {
     }
 
     if (std::strcmp(shape, "2x4") == 0) {
-        return run_benchmark<matmul_template_fp8<2,4,8>>(N, N, N);
+        return run_benchmark<matmul_template_fp8<2,4,8,8>>(N, N, N);
     } else if (std::strcmp(shape, "2x6") == 0) {
-        return run_benchmark<matmul_template_fp8<2,6,8>>(N, N, N);
+        return run_benchmark<matmul_template_fp8<2,6,8,6>>(N, N, N);
     } else if (std::strcmp(shape, "2x8") == 0) {
-        return run_benchmark<matmul_template_fp8<2,8,8>>(N, N, N);
+        return run_benchmark<matmul_template_fp8<2,8,8,5>>(N, N, N);
     } else if (std::strcmp(shape, "3x4") == 0) {
-        return run_benchmark<matmul_template_fp8<3,4,8>>(N, N, N);
+        return run_benchmark<matmul_template_fp8<3,4,8,6>>(N, N, N);
     } else {
         std::cout << "Unknown shape '" << shape << "'. Supported: 2x4, 2x6, 2x8, 3x4. Falling back to 2x4.\n";
-        return run_benchmark<matmul_template_fp8<2,4,8>>(N, N, N);
+        return run_benchmark<matmul_template_fp8<2,4,8,8>>(N, N, N);
     }
 }
 
