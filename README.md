@@ -255,7 +255,7 @@ Learn more about ThunderKittens and how GPUs work by checking out our blogs:
 - [Easier, Better, Faster, Cuter Blogpost, Oct. 2024](https://hazyresearch.stanford.edu/blog/2024-10-29-tk2)
 - [GPUs Go Brrr Blogpost, May 2024](https://hazyresearch.stanford.edu/blog/2024-05-12-tk)
 - [ThunderKittens: Bringing fp8 to theaters near you, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-27-tk-fp8)
-- [ThunderMittens For Your ThunderKittens, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-28-tk-mlx)
+ - [ThunderMittens For Your ThunderKittens, Nov 2024](https://hazyresearch.stanford.edu/blog/2024-11-28-tk-mlx)
 
 Please check out our paper for even more details: [paper](https://arxiv.org/abs/2410.20399)
 
